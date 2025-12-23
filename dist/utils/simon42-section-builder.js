@@ -185,11 +185,6 @@ export function createOverviewSection(data) {
  * @param {boolean} groupByFloors - Ob nach Etagen gruppiert werden soll
  * @param {Object} hass - Home Assistant Objekt (für Floor-Namen)
  */
-
-/**
- * Erstellt die Bereiche-Section(s)
- * FIX: Deaktiviert sensor_classes bei manueller Auswahl, um Anzeige zu erzwingen
- */
 export function createAreasSection(visibleAreas, groupByFloors = false, hass = null, config = {}) {
   
   // Hilfsfunktion: Mapping von Device-ID zu Area-ID
