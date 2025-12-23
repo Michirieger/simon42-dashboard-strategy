@@ -185,117 +185,163 @@ export function createOverviewSection(data) {
  * @param {boolean} groupByFloors - Ob nach Etagen gruppiert werden soll
  * @param {Object} hass - Home Assistant Objekt (für Floor-Namen)
  */
-export function createAreasSection(visibleAreas, groupByFloors = false, hass = null) {
-  // Wenn keine Etagen-Gruppierung gewünscht: alte Logik
+
+/**
+ * Erstellt die Bereiche-Section(s)
+ * FIX: Deaktiviert sensor_classes bei manueller Auswahl, um Anzeige zu erzwingen
+ */
+export function createAreasSection(visibleAreas, groupByFloors = false, hass = null, config = {}) {
+  
+  // Hilfsfunktion: Mapping von Device-ID zu Area-ID
+  const getDeviceAreaMap = () => {
+    const map = new Map();
+    if (hass && hass.devices) {
+        Object.values(hass.devices).forEach(d => {
+            if (d.area_id) map.set(d.id, d.area_id);
+        });
+    }
+    return map;
+  };
+
+  const deviceAreaMap = getDeviceAreaMap();
+
+  const createAreaCard = (area) => {
+    const areaId = area.area_id;
+    const areaOptions = config.areas_options?.[areaId] || {};
+    
+    // Die gewählten Sensoren
+    const selectedTemp = areaOptions.sensor_temp;
+    const selectedHum  = areaOptions.sensor_hum;
+    const selectedVoc  = areaOptions.sensor_voc;
+    
+    const excludeList = [];
+    const forceEntitiesList = [];
+
+    // Haben wir manuelle Einstellungen?
+    const hasManualSettings = selectedTemp || selectedHum || selectedVoc;
+
+    if (hass && hass.entities) {
+        const registryEntities = Object.values(hass.entities);
+        
+        // Alle Entities im Raum finden
+        const roomEntities = registryEntities.filter(e => {
+            if (e.area_id === areaId) return true;
+            if (e.device_id || deviceAreaMap.get(e.device_id) === areaId) return true;
+            return false;
+        });
+
+        if (hasManualSettings) {
+            // 1. WHITELIST
+            if (selectedTemp) forceEntitiesList.push(selectedTemp);
+            if (selectedHum) forceEntitiesList.push(selectedHum);
+            if (selectedVoc) forceEntitiesList.push(selectedVoc);
+
+            // 2. BLACKLIST
+            roomEntities.forEach(e => {
+              const entityId = e.entity_id;
+              const stateObj = hass.states[entityId];
+              if (!stateObj) return;
+
+              // Nur Sensoren betrachten
+              if (!entityId.startsWith('sensor.')) return;
+              // TEMPERATUR FILTER
+              if (stateObj.attributes.device_class === 'temperature' && selectedTemp && entityId !== selectedTemp) {
+                  excludeList.push(entityId);
+              }
+              
+              // LUFTFEUCHTIGKEIT FILTER (Analog dazu)
+              if (stateObj.attributes.device_class === 'humidity' && selectedHum && entityId !== selectedHum) {
+                  excludeList.push(entityId);
+              }
+              
+              // VOC FILTER
+              if (stateObj.attributes.device_class === 'volatile_organic_compounds_parts' && selectedVoc && entityId !== selectedVoc) {
+                  excludeList.push(entityId);
+              }
+            });
+        }
+    }
+
+    const uniqueExcludeList = [...new Set(excludeList)];
+
+    // Basis-Konfiguration
+    const cardConfig = {
+      type: "area",
+      area: area.area_id,
+      display_type: "compact",
+      alert_classes: [ "motion", "moisture", "occupancy" ],
+      features: [{ type: "area-controls" }],
+      features_position: "inline",
+      navigation_path: area.area_id,
+      vertical: false,
+      sensor_classes: ["temperature", "humidity", "volatile_organic_compounds_parts"]
+    };
+
+    if (hasManualSettings) {
+      if (uniqueExcludeList.length > 0) {
+          cardConfig.exclude_entities = uniqueExcludeList;
+      }
+
+    }
+
+    return cardConfig;
+  };
+
+  
   if (!groupByFloors || !hass) {
     return {
       type: "grid",
       cards: [
-        {
-          type: "heading",
-          heading_style: "title",
-          heading: "Bereiche"
-        },
-        ...visibleAreas.map((area) => ({
-          type: "area",
-          area: area.area_id,
-          display_type: "compact",
-          alert_classes: [ "motion", "moisture", "occupancy" ],
-          sensor_classes: [ "temperature", "humidity", "volatile_organic_compounds_parts" ],
-          features: [{ type: "area-controls" }],
-          features_position: "inline",
-          navigation_path: area.area_id,
-          vertical: false
-        }))
+        { type: "heading", heading_style: "title", heading: "Bereiche" },
+        ...visibleAreas.map((area) => createAreaCard(area))
       ]
     };
   }
 
-  // Gruppiere Areas nach Floor
   const areasByFloor = new Map();
   const areasWithoutFloor = [];
 
   visibleAreas.forEach(area => {
     if (area.floor_id) {
-      if (!areasByFloor.has(area.floor_id)) {
-        areasByFloor.set(area.floor_id, []);
-      }
+      if (!areasByFloor.has(area.floor_id)) areasByFloor.set(area.floor_id, []);
       areasByFloor.get(area.floor_id).push(area);
     } else {
       areasWithoutFloor.push(area);
     }
   });
 
-  // Erstelle Sections für jede Etage
   const sections = [];
-
-  // Sortiere Floors nach Name (alphabetisch)
   const sortedFloors = Array.from(areasByFloor.keys()).sort((a, b) => {
-    const floorA = hass.floors?.[a];
-    const floorB = hass.floors?.[b];
-    const nameA = floorA?.name || a;
-    const nameB = floorB?.name || b;
+    const nameA = hass.floors?.[a]?.name || a;
+    const nameB = hass.floors?.[b]?.name || b;
     return nameA.localeCompare(nameB);
   });
 
   sortedFloors.forEach(floorId => {
     const areas = areasByFloor.get(floorId);
     const floor = hass.floors?.[floorId];
-    const floorName = floor?.name || floorId;
-    const floorIcon = floor?.icon || "mdi:floor-plan";
-
     sections.push({
       type: "grid",
       cards: [
-        {
-          type: "heading",
-          heading_style: "title",
-          heading: floorName,
-          icon: floorIcon
-        },
-        ...areas.map((area) => ({
-          type: "area",
-          area: area.area_id,
-          display_type: "compact",
-          alert_classes: [ "motion", "moisture", "occupancy" ],
-          sensor_classes: [ "temperature", "humidity", "volatile_organic_compounds_parts" ],
-          features: [{ type: "area-controls" }],
-          features_position: "inline",
-          navigation_path: area.area_id,
-          vertical: false
-        }))
+        { type: "heading", heading_style: "title", heading: floor?.name || floorId, icon: floor?.icon || "mdi:floor-plan" },
+        ...areas.map((area) => createAreaCard(area))
       ]
     });
   });
 
-  // Bereiche ohne Etage (falls vorhanden)
   if (areasWithoutFloor.length > 0) {
     sections.push({
       type: "grid",
       cards: [
-        {
-          type: "heading",
-          heading_style: "title",
-          heading: "Weitere Bereiche",
-          icon: "mdi:home-outline"
-        },
-        ...areasWithoutFloor.map((area) => ({
-          type: "area",
-          area: area.area_id,
-          display_type: "compact",
-          alert_classes: [ "motion", "moisture", "occupancy" ],
-          sensor_classes: [ "temperature", "humidity", "volatile_organic_compounds_parts" ],
-          features: [{ type: "area-controls" }],
-          features_position: "inline",
-          navigation_path: area.area_id,
-          vertical: false
-        }))
+        { type: "heading", heading_style: "title", heading: "Weitere Bereiche", icon: "mdi:home-outline" },
+        ...areasWithoutFloor.map((area) => createAreaCard(area))
       ]
     });
   }
 
   return sections;
 }
+
 
 /**
  * Erstellt die Wetter & Energie-Section(s)

@@ -10,7 +10,7 @@ import {
   attachClockCardCheckboxListener,
   attachSummaryViewsCheckboxListener,
   attachRoomViewsCheckboxListener,
-  attachGroupByFloorsCheckboxListener, // NEU
+  attachGroupByFloorsCheckboxListener,
   attachCoversSummaryCheckboxListener,
   attachSecuritySummaryCheckboxListener,
   attachBatterySummaryCheckboxListener,
@@ -105,6 +105,9 @@ class Simon42DashboardStrategyEditor extends HTMLElement {
     const hiddenAreas = this._config.areas_display?.hidden || [];
     const areaOrder = this._config.areas_display?.order || [];
 
+    const areas_options = this._config.areas_options; 
+    const hass = this._hass; 
+
     // Setze HTML-Inhalt mit Styles und Template
     this.innerHTML = `
       <style>${getEditorStyles()}</style>
@@ -129,7 +132,9 @@ class Simon42DashboardStrategyEditor extends HTMLElement {
         showCoversSummary,
         showSecuritySummary,
         showBatterySummary,
-        showLightSummary
+        showLightSummary,
+        areas_options,
+        hass
       })}
     `;
 
@@ -149,6 +154,7 @@ class Simon42DashboardStrategyEditor extends HTMLElement {
     this._attachAlarmEntityListener();
     this._attachFavoritesListeners();
     this._attachRoomPinsListeners();
+    this._attachAreaSensorListeners();
     attachAreaCheckboxListeners(this, (areaId, isVisible) => this._areaVisibilityChanged(areaId, isVisible));
     
     // Sortiere die Area-Items nach displayOrder
@@ -424,6 +430,7 @@ class Simon42DashboardStrategyEditor extends HTMLElement {
     });
   }
 
+
   _addRoomPinEntity(entityId) {
     if (!this._config || !this._hass) {
       return;
@@ -532,6 +539,40 @@ class Simon42DashboardStrategyEditor extends HTMLElement {
         }).join('')}
       </div>
     `;
+  }
+
+  _attachAreaSensorListeners() {
+    const list = this.querySelector('#area-list');
+    if (list) {
+      list.addEventListener('change', (e) => {
+        if (e.target.classList.contains('area-sensor-select')) {
+           this._areaSensorChanged(e.target.dataset.areaId, e.target.dataset.sensorType, e.target.value);
+        }
+      });
+    }
+  }
+
+  _areaSensorChanged(areaId, type, value) {
+    if (!this._config) return;
+
+    // Deep Clone der Config für saubere Änderung
+    const newConfig = JSON.parse(JSON.stringify(this._config));
+
+    if (!newConfig.areas_options) newConfig.areas_options = {};
+    if (!newConfig.areas_options[areaId]) newConfig.areas_options[areaId] = {};
+
+    if (value === "") {
+      delete newConfig.areas_options[areaId][type];
+      
+      // Aufräumen leerer Objekte
+      if(Object.keys(newConfig.areas_options[areaId]).length === 0) delete newConfig.areas_options[areaId];
+      if(Object.keys(newConfig.areas_options).length === 0) delete newConfig.areas_options;
+    } else {
+      newConfig.areas_options[areaId][type] = value;
+    }
+
+    this._config = newConfig;
+    this._fireConfigChanged(newConfig);
   }
 
   _getAllEntitiesForSelect() {
@@ -1004,6 +1045,8 @@ class Simon42DashboardStrategyEditor extends HTMLElement {
       this._isUpdatingConfig = false;
     }, 0);
   }
+
+
 }
 
 // Registriere Custom Element
